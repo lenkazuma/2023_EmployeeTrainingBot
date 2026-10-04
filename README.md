@@ -1,66 +1,64 @@
-# 百度千帆大模型文件读取器(带记忆版) - Streamlit App for Document Processing and Analysis using LangChain & Qianfan
+# 员工培训手册问答机器人 · LangChain + 百度千帆
 
-This Streamlit application leverages the power of various libraries including LangChain, Qianfan, PyPDF, and Streamlit itself to perform document analysis, embedding generation, and conversational retrieval from documents. It's designed to handle Chinese text, providing functionalities such as chunking data, creating embeddings, and facilitating interactive Q&A sessions based on the document content.
+基于 Streamlit、LangChain 和百度千帆 ERNIE 大模型的文档问答机器人：加载一份培训手册或公司文档（PDF），自动生成摘要，员工可以连续提问，回答只依据文档内容并注明参考页码，结束时还能生成对话总结。
 
-该 Streamlit 应用利用了包括 LangChain、PyPDF2 和 Streamlit 在内的多种库的能力，执行文档分析、嵌入生成和文档的对话式检索。它旨在处理中文文本，提供如数据块切分、生成嵌入以及基于文档内容进行交互式问答等功能。
+A Streamlit chatbot that answers employees' questions about a training manual (or any PDF) using LangChain and Baidu Qianfan ERNIE models, with page references and conversation summaries.
 
-## Features 功能
+## 功能
 
-- **Document Loading and Processing**: Load documents and process them into manageable chunks.
-- **Embedding Generation**: Create embeddings for document chunks using LangChain and store them in Chroma DB.
-- **Interactive Q&A**: Engage in interactive Q&A sessions, with the ability to ask questions based on the document's content.
-- **Conversational Summaries**: Generate summaries of conversations and documents.
+- **多种文档来源**：内置示例（万科 2023 年一季报），也可以上传自己的 PDF 或填写 PDF 链接。
+- **文档摘要**：加载后自动生成中文摘要。
+- **带记忆的问答**：聊天界面，记住最近几轮对话，回答注明参考页码；文档中找不到时会直接说明。
+- **对话总结**：点击「结束对话并总结」生成本次问答要点。
+- **索引缓存**：按文档内容哈希把向量索引保存在 `.index_cache/`，同一份文档只需计算一次 embedding；换文档不会误用旧索引。
+- **模型可选**：ERNIE-3.5-8K / ERNIE-4.0-8K / ERNIE-Speed-8K / ERNIE-Lite-8K。
 
-- **文档加载与处理**：加载文档并将其处理成可管理的块。
-- **嵌入生成**：为文档块生成嵌入，并将其存储在 Chroma DB 中。
-- **交互式问答**：基于文档内容进行交互式问答。
-- **对话摘要**：生成基于文档和对话内容的摘要。
+## 安装
 
-
-## Requirements 需求
-
-To run this application, you will need Python 3.7 or later. The required Python packages can be installed using the provided `requirements.txt` file.
-
-运行此应用，您将需要 Python 3.7 或更高版本。可以使用提供的 `requirements.txt` 文件安装所需的 Python 包。
-
-## Installation 安装
-
-1. Clone this repository to your local machine.
-2. Install the required packages:
+需要 Python 3.10+。
 
 ```bash
+git clone https://github.com/lenkazuma/EmployeeTrainingBot.git
+cd EmployeeTrainingBot
 pip install -r requirements.txt
 ```
 
-3. Run the Streamlit application:
+## 配置千帆凭证
+
+在 [百度智能云千帆控制台](https://console.bce.baidu.com/qianfan/) 创建应用获取 API Key / Secret Key，然后任选一种方式：
+
+- 在项目根目录创建 `.env`：
+
+  ```env
+  QIANFAN_AK=your-api-key
+  QIANFAN_SK=your-secret-key
+  ```
+
+- 或运行后在页面侧边栏填写（只保存在当前会话中）。
+
+## 运行
 
 ```bash
 streamlit run streamlit_app.py
 ```
 
-## Usage 使用方法
+浏览器打开 <http://localhost:8501>，在侧边栏选择文档来源后即可提问。
 
-Upon launching the application, you will be presented with an interface to interact with. You can change the documents to read, ask questions, and receive summaries based on the document content.
+## 项目结构
 
-启动应用后，您将看到一个交互界面。您可以更改读取的文档、提问并根据文档内容接收摘要。
+```
+├── streamlit_app.py   # Streamlit 界面
+├── bot_core.py        # PDF 解析、切块、索引缓存、问答与摘要
+└── tests/             # pytest 测试（不需要千帆凭证）
+```
 
-## How It Works
+## 测试
 
-The `streamlit_app.py` script includes several key functions:
+```bash
+pip install pytest
+pytest -q
+```
 
-- `chunk_data`: Splits the document into manageable chunks.
-- `create_embeddings`: Generates embeddings for each chunk and stores them in a database.
-- `ask_with_memory`: Facilitates a Q&A session using the generated embeddings and document context.
-- `ask_for_document_summary`: Provides a summary of the document based on its content.
+## 许可证
 
-## Contributing 贡献
-
-Contributions are welcome! Please feel free to submit pull requests, report bugs, or suggest features.
-
-欢迎贡献！请随时提交拉取请求、报告错误或建议功能。
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-此项目根据 MIT 许可证授权 - 详情请见 LICENSE 文件。
+本项目基于 MIT 许可证授权，详见 [LICENSE](LICENSE)。
