@@ -136,10 +136,10 @@ if question:
     st.session_state.history = st.session_state.history[-CHAT_CONTEXT_LENGTH:]
 
 col1, col2 = st.columns(2)
-if col1.button("结束对话并总结", use_container_width=True):
+if col1.button("结束对话并总结", width="stretch"):
     with st.spinner("正在总结对话..."):
         summary = summarize_conversation([(t["q"], t["a"]) for t in st.session_state.history], llm, title)
     st.success(summary)
-if col2.button("清空对话", use_container_width=True):
+if col2.button("清空对话", width="stretch"):
     st.session_state.history = []
     st.rerun()
