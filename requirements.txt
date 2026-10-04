@@ -1,8 +1,8 @@
-langchain
-langchain-community
-docx2txt
-pypdf
-streamlit
-chromadb
-pysqlite3-binary
-qianfan
+streamlit>=1.31
+python-dotenv
+requests
+pypdf>=4
+langchain-core>=0.3.40
+langchain-text-splitters>=0.3
+langchain-community>=0.3
+qianfan>=0.4

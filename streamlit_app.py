@@ -1,236 +1,145 @@
+import os
+from pathlib import Path
+
 import streamlit as st
-from langchain.vectorstores import Chroma
-from langchain.embeddings import QianfanEmbeddingsEndpoint
-from langchain_community.llms import QianfanLLMEndpoint
-from langchain.chains import LLMMathChain
-import streamlit.components.v1 as components
-import sys
+from dotenv import find_dotenv, load_dotenv
 
-from langchain.document_loaders import PyPDFLoader
-__import__('pysqlite3')
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-
-from langchain.chains import ConversationalRetrievalChain
-from langchain.prompts.chat import ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate
-
-llm = QianfanLLMEndpoint(
-    streaming=True,
-    model="ERNIE-Bot-turbo",
-    endpoint="eb-instant",
+from bot_core import (
+    EmptyDocumentError,
+    answer,
+    download_pdf,
+    extract_pages,
+    fingerprint,
+    load_or_build_index,
+    split_pages,
+    summarize_conversation,
+    summarize_document,
 )
 
-# chunk the data
-def chunk_data(data, chunk_size):
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=200,
-        length_function=len
-    )
-    chunks = text_splitter.split_documents(data)
-    return chunks
+DEFAULT_TITLE = "万科企业股份有限公司2023年第一季度报告"
+DEFAULT_URL = "http://static.cninfo.com.cn/finalpage/2023-04-29/1216686497.PDF"
+MODELS = ["ERNIE-3.5-8K", "ERNIE-4.0-8K", "ERNIE-Speed-8K", "ERNIE-Lite-8K"]
+INDEX_DIR = Path(".index_cache")
+CHAT_CONTEXT_LENGTH = 10
 
-# Create embeddings in chroma db
-def create_embeddings(chunks):
-    print("Embedding to Chroma DB...")
-    embeddings = QianfanEmbeddingsEndpoint()
-    #db2 = Chroma.from_documents(docs, embedding_function, persist_directory="./chroma_db")
-    vector_store = Chroma.from_documents(documents=chunks, embedding=embeddings,persist_directory="./chroma_db")
-    print("Done")
-    return vector_store
-
-def ask_with_memory(vector_store, question, chat_history=[], document_description=""):
-    retriever = vector_store.as_retriever( # the vs can return documents
-    search_type='similarity', search_kwargs={'k': 3})
- 
-    general_system_template = f""" 
-    You are an assistant named Ernie. You are examining a document. Use only the heading and piece of context to answer the questions at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer. Do not add any observations or comments. Answer only in Chinese.
-    ----
-    HEADING: ({document_description})
-    CONTEXT: {{context}}
-    ----
-    """
-    general_user_template = "Here is the next question, remember to only answer if you can from the provided context. Only respond in Chinese. QUESTION:```{question}```"
-    messages = [
-                SystemMessagePromptTemplate.from_template(general_system_template),
-                HumanMessagePromptTemplate.from_template(general_user_template)
-    ]
-    qa_prompt = ChatPromptTemplate.from_messages( messages )
-
-    #st.write(qa_prompt)
-    #st.write(retriever)
-    crc = ConversationalRetrievalChain.from_llm(llm, retriever, combine_docs_chain_kwargs={'prompt': qa_prompt})
-    result = crc({'question': question, 'chat_history': chat_history})
-    return result
-
-def ask_for_document_summary(vector_store, question,document_description=""):
-    prompt_template = f""" 
-    You are an assistant named Ernie. You are examining a document. Use only the heading and piece of context to do the summary.  Answer only in Chinese.
-    ----
-    HEADING: ({document_description})
-    CONTEXT: {{context}}
-    ----
-    """
-    from langchain import PromptTemplate
-    from langchain.chains import RetrievalQA
-    from langchain.chat_models import ErnieBotChat
-    prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
-    chain_type_kwargs = {"prompt": prompt, "verbose":True}
-    retriever = vector_store.as_retriever(search_type='similarity', search_kwargs={'k': 3})
-    qa = RetrievalQA.from_chain_type(llm=llm,
-                                 chain_type="stuff",
-                                 retriever=retriever,
-                                 chain_type_kwargs=chain_type_kwargs
-                                 )
-    document_summary=qa.run(question)
-    #st.write(document_summary)
-    return document_summary
+load_dotenv(find_dotenv(), override=True)
+st.set_page_config(page_title="员工培训助手", page_icon="🏠")
 
 
-def ask_for_summary(vector_store, chat_history=[], document_description=""):
-    from langchain.chains import ConversationalRetrievalChain
-    from langchain.prompts.chat import ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate
-    llm = QianfanLLMEndpoint(
-        streaming=True, 
-        model="ERNIE-Bot-turbo",
-        endpoint="eb-instant",
-        )
-    retriever = vector_store.as_retriever( # the vs can return documents
-    search_type='similarity', search_kwargs={'k': 3})
-    
-    general_system_template = f""" 
-    You are an assistant named Ernie. You are examining a document and the previous chat history. Use only the heading and piece of context to answer the questions at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer. Do not add any observations or comments. Answer only in Chinese.
-    ----
-    HEADING: ({document_description})
-    CONTEXT: {{context}}
-    ----
-    """
-    general_user_template = "Here is the chat history ```{chat_history}```, do a conversation summary based on the chat history and the document. Remember to only answer if you can from the provided context. Only respond in Chinese. "
-    messages = [
-                SystemMessagePromptTemplate.from_template(general_system_template),
-                HumanMessagePromptTemplate.from_template(general_user_template)
-    ]
-    qa_prompt = ChatPromptTemplate.from_messages( messages )
-    crc = ConversationalRetrievalChain.from_llm(llm, retriever, combine_docs_chain_kwargs={'prompt': qa_prompt})
-    summary = crc({'question': "Give me a summary of the conversation", 'chat_history': chat_history})
-    return summary
-
-def clear_history():
-    if "history" in st.session_state:
-        del st.session_state["history"]
-
-def format_chat_history(chat_history):
-    formatted_history = ""
-    for entry in chat_history:
-        question, answer = entry
-        # Added an extra '\n' for the blank line
-        formatted_history += f"问题: {question}\n回答: {answer}\n\n"
-    return formatted_history
+def credentials() -> dict:
+    ak = st.session_state.get("qianfan_ak") or os.getenv("QIANFAN_AK", "")
+    sk = st.session_state.get("qianfan_sk") or os.getenv("QIANFAN_SK", "")
+    return {"qianfan_ak": ak, "qianfan_sk": sk} if ak and sk else {}
 
 
+def make_llm(model: str):
+    from langchain_community.chat_models import QianfanChatEndpoint
 
-if __name__ == "__main__":
-    import os
-    from dotenv import load_dotenv, find_dotenv
-    load_dotenv(find_dotenv(), override=True)
-    st.set_page_config(
-    page_title="Home",
-    page_icon="🏠",
-    )
-    st.subheader("万科企业股份有限公司2023年第一季度报告")
-
-    
-    st.session_state.document_description = "万科企业股份有限公司2023年第一季度报告"
-    st.session_state.chat_context_length = 10
-    if "data" not in st.session_state:
-        loader = PyPDFLoader("http://static.cninfo.com.cn/finalpage/2023-04-29/1216686497.PDF")
-        st.session_state.data = loader.load()
-
-    
-    #st.write(st.session_state.data[0])
-    if "chunks" not in st.session_state:
-        st.session_state.chunks = chunk_data(st.session_state.data, 384)
-    if "vector_store" not in st.session_state:
-        if os.path.exists("./chroma_db"):
-            st.session_state.vector_store = Chroma(persist_directory="./chroma_db", embedding_function=QianfanEmbeddingsEndpoint())
-        else:
-            st.session_state.vector_store = create_embeddings(st.session_state.chunks)
+    return QianfanChatEndpoint(model=model, temperature=0.1, **credentials())
 
 
-    if "summary" not in st.session_state:
-        #st.session_state.summary = []
-        pdf_summary = "Give me a concise summary of the document, only respond in Chinese. "
-        st.session_state.summary = ask_for_document_summary(st.session_state["vector_store"],pdf_summary,st.session_state.document_description)
-        st.write(st.session_state.summary)
-    else:
-        st.write(st.session_state.summary)
-    # Create the placeholder for chat history
-    chat_history_placeholder = st.empty()
+def make_embeddings():
+    from langchain_community.embeddings import QianfanEmbeddingsEndpoint
+
+    return QianfanEmbeddingsEndpoint(**credentials())
 
 
+with st.sidebar:
+    st.header("设置")
+    st.caption("留空时使用环境变量 QIANFAN_AK / QIANFAN_SK（或 QIANFAN_ACCESS_KEY / QIANFAN_SECRET_KEY）。")
+    st.text_input("千帆 API Key (AK)", type="password", key="qianfan_ak")
+    st.text_input("千帆 Secret Key (SK)", type="password", key="qianfan_sk")
+    model = st.selectbox("模型", MODELS)
 
-    if "history" not in st.session_state:
-        st.session_state.history = []
-        chat_history_placeholder.text_area(label="你好，我是文心智能助理Ernie。请问你有什么问题呢？", value="", height=400)
-    else:
-        chat_history_placeholder.text_area(label="你好，我是文心智能助理Ernie。请问你有什么问题呢？", value=format_chat_history(st.session_state.history)  , height=400)
+    st.subheader("培训文档")
+    source = st.radio("文档来源", ["示例：万科 2023 一季报", "上传 PDF", "PDF 链接"])
+    uploaded = st.file_uploader("上传 PDF", type=["pdf"]) if source == "上传 PDF" else None
+    url = st.text_input("PDF 链接", value="") if source == "PDF 链接" else DEFAULT_URL
+    title = st.text_input("文档标题", value=DEFAULT_TITLE if source.startswith("示例") else "")
 
-    # User input for the question
-    with st.form(key="myform", clear_on_submit=True):
-        q = st.text_input("请输入你的问题：", key="user_question")
-        submit_button = st.form_submit_button("提交问题")
-    
-    col1, col2, col3,col4, col5 = st.columns(5)
-    with col1:
-        pass
-    with col2:
-        pass
-    with col3 :
-        end_button = st.button("结束对话")
-    with col4 :
-        pass
-    with col5 :
-        pass
-    # If user en
-    # tered a question
-    if submit_button:
-        if "vector_store" in st.session_state:
-            vector_store = st.session_state["vector_store"]
-            result = ask_with_memory(vector_store, q, st.session_state.history, st.session_state.document_description)
-            # If there are n or more messages, remove the first element of the array
-            if len(st.session_state.history) >= st.session_state.chat_context_length:
-                st.session_state.history = st.session_state.history[1:]
+if source == "上传 PDF" and uploaded is None:
+    st.info("请在左侧上传一份 PDF 培训文档。")
+    st.stop()
+if source == "PDF 链接" and not url:
+    st.info("请在左侧填写 PDF 链接。")
+    st.stop()
 
-            st.session_state.history.append((q, result['answer']))
+title = title or (uploaded.name if uploaded else "培训文档")
+st.subheader(title)
 
-            # Create formatted string to show user, removing the inserted phrase
-            chat_history_str = format_chat_history(st.session_state.history)            
 
-            # Update the chat history in the placeholder as a text area
-            chat_history_placeholder.text_area(label="你好，我是文心智能助理Ernie。请问你有什么问题呢？",value=chat_history_str, height=400)
+@st.cache_data(show_spinner=False)
+def fetch_pdf(pdf_url: str) -> bytes:
+    return download_pdf(pdf_url)
 
-            # JavaScript code to scroll the text area to the bottom
-            js = f"""
-            <script>
-                function scroll(dummy_var_to_force_repeat_execution){{
-                    var textAreas = parent.document.querySelectorAll('.stTextArea textarea');
-                    for (let index = 0; index < textAreas.length; index++) {{
-                        textAreas[index].scrollTop = textAreas[index].scrollHeight;
-                    }}
-                }}
-                scroll({len(st.session_state.history)})
-            </script>
-            """
 
-            components.html(js)
-        
-            # If user choose to end the conversation
-    if end_button:
-        if "vector_store" in st.session_state:
-            vector_store = st.session_state["vector_store"]
-            chat_summary = ask_for_summary(vector_store, st.session_state.history, st.session_state.document_description)
-            st.write(chat_summary['answer'])
-        else:
-            st.write("There is nothing to be summarised")
-    
+try:
+    with st.spinner("正在加载文档..."):
+        pdf_bytes = uploaded.getvalue() if uploaded else fetch_pdf(url)
+except Exception as exc:
+    st.error(f"下载文档失败：{exc}")
+    st.stop()
 
+doc_id = fingerprint(pdf_bytes)
+if st.session_state.get("doc_id") != doc_id:
+    try:
+        with st.spinner("正在建立文档索引（同一文档只需一次）..."):
+            chunks = split_pages(extract_pages(pdf_bytes))
+            store = load_or_build_index(chunks, make_embeddings(), INDEX_DIR / f"{doc_id}.json")
+    except EmptyDocumentError as exc:
+        st.error(str(exc))
+        st.stop()
+    except Exception as exc:
+        st.error(f"建立索引失败，请检查千帆凭证：{exc}")
+        st.stop()
+    st.session_state.update(doc_id=doc_id, store=store, summary=None, history=[])
+
+llm = make_llm(model)
+
+if st.session_state.summary is None:
+    try:
+        with st.spinner("正在生成文档摘要..."):
+            st.session_state.summary = summarize_document(st.session_state.store, llm, title)
+    except Exception as exc:
+        st.warning(f"生成摘要失败：{exc}")
+with st.expander("文档摘要", expanded=True):
+    st.write(st.session_state.summary or "")
+
+st.chat_message("assistant").write("你好，我是文心智能助理 Ernie。请问你有什么问题呢？")
+for turn in st.session_state.history:
+    st.chat_message("user").write(turn["q"])
+    with st.chat_message("assistant"):
+        st.write(turn["a"])
+        if turn["pages"]:
+            st.caption("参考页码：" + "、".join(str(p) for p in turn["pages"]))
+
+question = st.chat_input("请输入你的问题")
+if question:
+    st.chat_message("user").write(question)
+    with st.chat_message("assistant"):
+        try:
+            with st.spinner("思考中..."):
+                result = answer(
+                    question,
+                    st.session_state.store,
+                    llm,
+                    title,
+                    history=[(t["q"], t["a"]) for t in st.session_state.history],
+                )
+        except Exception as exc:
+            st.error(f"回答失败：{exc}")
+            st.stop()
+        st.write(result.text)
+        if result.pages:
+            st.caption("参考页码：" + "、".join(str(p) for p in result.pages))
+    st.session_state.history.append({"q": question, "a": result.text, "pages": result.pages})
+    st.session_state.history = st.session_state.history[-CHAT_CONTEXT_LENGTH:]
+
+col1, col2 = st.columns(2)
+if col1.button("结束对话并总结", use_container_width=True):
+    with st.spinner("正在总结对话..."):
+        summary = summarize_conversation([(t["q"], t["a"]) for t in st.session_state.history], llm, title)
+    st.success(summary)
+if col2.button("清空对话", use_container_width=True):
+    st.session_state.history = []
+    st.rerun()
